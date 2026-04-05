@@ -1,13 +1,13 @@
-// Usando fetch nativo (Node.js 18+) para evitar dependências externas na Netlify
+const https = require('https');
+
 exports.handler = async (event, context) => {
-    // Configurações (Via Variáveis de Ambiente ou Hardcoded)
+    // Configurações
     const SECRET_KEY = process.env.GHOSTSPAY_SECRET_KEY || 'sk_live_YflKFvyFkCZFRfLnyBSPeaIg0dACygEcQXUDcmW3W2t5UjNE';
     const COMPANY_ID = process.env.GHOSTSPAY_COMPANY_ID || '6ef93785-724c-4569-b78f-f97a24a25c13';
     
     const authHeader = `Basic ${Buffer.from(SECRET_KEY + ':').toString('base64')}`;
     const { path, httpMethod, body } = event;
 
-    // CORS Headers
     const headers = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
@@ -19,18 +19,48 @@ exports.handler = async (event, context) => {
         return { statusCode: 200, headers, body: '' };
     }
 
+    // Helper para fazer requisições HTTPS sem dependências (mais estável na Netlify)
+    const makeRequest = (url, method, auth, data = null) => {
+        return new Promise((resolve, reject) => {
+            const urlObj = new URL(url);
+            const options = {
+                hostname: urlObj.hostname,
+                path: urlObj.pathname,
+                method: method,
+                headers: {
+                    'Authorization': auth,
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'NetlifyFunction/1.0'
+                }
+            };
+
+            const req = https.request(options, (res) => {
+                let chunks = '';
+                res.on('data', (chunk) => chunks += chunk);
+                res.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(chunks);
+                        resolve({ status: res.statusCode, data: parsed });
+                    } catch (e) {
+                        resolve({ status: res.statusCode, data: chunks });
+                    }
+                });
+            });
+
+            req.on('error', (e) => reject(e));
+            if (data) req.write(JSON.stringify(data));
+            req.end();
+        });
+    };
+
     // ROTA: Criar Pix
     if (path.includes('create-pix') && httpMethod === 'POST') {
         try {
             const data = JSON.parse(body || '{}');
-            
-            // Normalização
             const amountVal = data.amount || data.value || 50;
             const finalAmount = Math.round(parseFloat(amountVal) * 100); 
             const customerName = data.customerName || data.name || 'Cliente Pix';
             const customerCPF = (data.customerCPF || data.cpf || '12900580404').replace(/\D/g, '');
-            
-            // Helper Email
             const cleanName = customerName.toLowerCase().replace(/\s+/g, '');
             const customerEmail = `${cleanName}${Math.floor(Math.random() * 9000) + 1000}@gmail.com`;
 
@@ -51,25 +81,18 @@ exports.handler = async (event, context) => {
                 }]
             };
 
-            const response = await fetch('https://api.ghostspay.com/v2/transactions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
+            console.log('[Netlify] Enviando payload para GhostsPay...');
+            const result = await makeRequest('https://api.ghostspay.com/v2/transactions', 'POST', authHeader, payload);
 
-            const resData = await response.json();
-
-            if (!response.ok) {
+            if (result.status >= 400) {
                 return {
-                    statusCode: response.status,
+                    statusCode: 200,
                     headers,
-                    body: JSON.stringify({ success: false, error: 'Erro na GhostsPay', details: resData })
+                    body: JSON.stringify({ success: false, error: 'Erro API GhostsPay', details: result.data })
                 };
             }
 
+            const resData = result.data;
             const pixData = resData.pix || resData;
             const pixCode = pixData.qrcode || pixData.qrcode_text || pixData.emv || pixData.payload || pixData.brcode || pixData.copy_paste || '';
 
@@ -90,10 +113,11 @@ exports.handler = async (event, context) => {
             };
 
         } catch (error) {
+            console.error('[Netlify] Erro Crítico:', error.message);
             return {
-                statusCode: 200, // Retornamos 200 pro site não travar, mas com erro no corpo
+                statusCode: 200,
                 headers,
-                body: JSON.stringify({ success: false, error: error.message })
+                body: JSON.stringify({ success: false, error: 'Erro Interno: ' + error.message })
             };
         }
     }
@@ -103,19 +127,14 @@ exports.handler = async (event, context) => {
         const parts = path.split('/');
         const transactionId = parts[parts.length - 1];
         try {
-            const response = await fetch(`https://api.ghostspay.com/v2/transactions/${transactionId}`, {
-                method: 'GET',
-                headers: { 'Authorization': authHeader }
-            });
-            const resData = await response.json();
-            
+            const result = await makeRequest(`https://api.ghostspay.com/v2/transactions/${transactionId}`, 'GET', authHeader);
             return {
                 statusCode: 200,
                 headers,
                 body: JSON.stringify({
-                    status: resData.status,
+                    status: result.data.status,
                     success: true,
-                    data: resData
+                    data: result.data
                 })
             };
         } catch (error) {
