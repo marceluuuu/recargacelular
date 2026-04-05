@@ -41,12 +41,17 @@
                 body: options.body
               });
               const result = await resp.json();
+              if (result.success === false) {
+                alert('Erro da GhostsPay: ' + (result.error || 'Erro desconhecido'));
+                console.error('[Netlify Debug]:', result);
+              }
               return new Response(JSON.stringify(result), {
                 status: 200, headers: { 'Content-Type': 'application/json' }
               });
             } catch (err) {
               console.error('[Interceptor] Erro no redirect local:', err);
             }
+
           }
 
           if (url.includes('functions/v1/check-payment-status')) {
