@@ -1,0 +1,4 @@
+# HTTrack Website Copier Cookie File
+# This file format is compatible with Netscape cookies
+lovable.dev	TRUE	/	FALSE	1999999999	__cf_bm	pdfKdHCCMstk8AmZcmPLalJmdp4ga3IkgymjZqkBPDw-1775320251.0395355-1.0.1.1-pUk4mPalKJEpH47N8CRQTC0whXnXbTtemAiHQioKVIZrH9PLJ.vzdW0dw3MSc8D4Qw_FDZ4GOP.6lhHnaYHUYz0BQdGkpp1BeX11I5WuA1fcH2qX4TZJcYv.fxC.8iO.
+

@@ -1,0 +1,20 @@
+{
+  "name": "recarga-pix-ghosstpay",
+  "version": "1.0.0",
+  "description": "Integration with GhostsPay V2 for PIX generation",
+  "main": "server.js",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "build": "echo 'No build step required'"
+  },
+  "author": "Antigravity",
+  "license": "ISC"
+}
