@@ -11,7 +11,8 @@
     "netlify-cli": "^17.0.0"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "echo 'Build complete'"
   },
   "author": "Antigravity",
   "license": "ISC"
