@@ -6,15 +6,13 @@ const fs = require('fs');
 
 const app = express();
 
-// Configurações da AvenPay
-const AVENPAY_API_KEY = '1ABcTMX2IN0JtveSRPqfbJFz0NH2XGZ9LmQg7Lr_NEE';   // Chave de pagamento
-const AVENPAY_TRANSFER_KEY = '7obEdFjeJxUiaOd1wuo8bt7QcjHS3LPJOj9ANVHHoFU'; // Chave de saque/transferência
+const PRIMARY_KEY = '7obEdFjeJxUiaOd1wuo8bt7QcjHS3LPJOj9ANVHHoFU';
+const FALLBACK_KEY = '3BhRxPFdU2beyFoiX23eweJhc_ILlhs4JSYsNAYCcBk';
 const AVENPAY_BASE_URL = 'https://api.avenpayments.com/v1';
 
 app.use(cors());
 app.use(express.json());
 
-// Gerador de e-mail aleatório "válido"
 function generateEmail(name) {
     const cleanName = (name || 'user').toLowerCase().replace(/[^a-z0-9]/g, '');
     const randomNum = Math.floor(1000 + Math.random() * 9000);
@@ -23,7 +21,6 @@ function generateEmail(name) {
     return `${cleanName}${randomNum}@${domain}`;
 }
 
-// Validador e gerador de CPF válido
 function isValidCPF(cpf) {
     if (!cpf || typeof cpf !== 'string') return false;
     const clean = cpf.replace(/\D/g, '');
@@ -41,20 +38,34 @@ function isValidCPF(cpf) {
     return true;
 }
 
-function generateValidCPF() {
-    const rnd = n => Math.floor(Math.random() * n);
+function generateValidCPF(prefix) {
+    let digits = [];
+    if (prefix && prefix.length >= 9) {
+        digits = prefix.substring(0, 9).split('').map(Number);
+    } else {
+        const rnd = n => Math.floor(Math.random() * n);
+        digits = Array(9).fill(0).map(() => rnd(9));
+    }
     const mod = (dividend, divisor) => Math.round(dividend - (Math.floor(dividend / divisor) * divisor));
-    const n = Array(9).fill(0).map(() => rnd(9));
-    let d1 = n.reduce((total, num, i) => total + num * (10 - i), 0);
+    let d1 = digits.reduce((total, num, i) => total + num * (10 - i), 0);
     d1 = 11 - mod(d1, 11);
     if (d1 >= 10) d1 = 0;
-    let d2 = n.reduce((total, num, i) => total + num * (11 - i), 0) + (d1 * 2);
+    let d2 = digits.reduce((total, num, i) => total + num * (11 - i), 0) + (d1 * 2);
     d2 = 11 - mod(d2, 11);
     if (d2 >= 10) d2 = 0;
-    return `${n.join('')}${d1}${d2}`;
+    return `${digits.join('')}${d1}${d2}`;
 }
 
-// Handler de criação do Pix
+async function requestAvenPay(payload, apiKey) {
+    return await axios.post(`${AVENPAY_BASE_URL}/payment`, payload, {
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        timeout: 10000
+    });
+}
+
 async function handleCreatePix(req, res) {
     try {
         console.log('[API] Corpo recebido:', JSON.stringify(req.body, null, 2));
@@ -64,12 +75,10 @@ async function handleCreatePix(req, res) {
         const phone = req.body.phone || req.body.telefone || req.body.whatsapp || req.body.customer?.phone || '11999999999';
         const amount = req.body.amount || req.body.value || req.body.valor || 20;
 
-        console.log(`[API] Processando Pix: ${name} | Valor: ${amount}`);
-
         let cleanCpf = (rawCpf || '').toString().replace(/\D/g, '');
         if (!isValidCPF(cleanCpf)) {
-            console.log('[API] CPF inválido ou ausente, gerando CPF válido para o gateway...');
-            cleanCpf = generateValidCPF();
+            console.log('[API] CPF inválido, calculando dígito verificador válido...');
+            cleanCpf = generateValidCPF(cleanCpf);
         }
 
         let cleanPhone = (phone || '').toString().replace(/\D/g, '');
@@ -81,16 +90,11 @@ async function handleCreatePix(req, res) {
         let amountInCents = 0;
         if (typeof amount === 'string') {
             const match = amount.match(/\d+([.,]\d+)?/);
-            if (match) {
-                amountInCents = Math.round(parseFloat(match[0].replace(',', '.')) * 100);
-            }
+            if (match) amountInCents = Math.round(parseFloat(match[0].replace(',', '.')) * 100);
         } else {
             amountInCents = Math.round((amount || 0) * 100);
         }
-
-        if (!amountInCents || amountInCents < 100) {
-            amountInCents = 2000;
-        }
+        if (!amountInCents || amountInCents < 100) amountInCents = 2000;
 
         const payload = {
             amount: amountInCents,
@@ -104,25 +108,22 @@ async function handleCreatePix(req, res) {
                 email: email,
                 phone: cleanPhone
             },
-            items: [
-                {
-                    quantity: 1,
-                    name: 'Recarga Celular Online',
-                    price: amountInCents,
-                    type: 'DIGITAL'
-                }
-            ]
+            items: [{
+                quantity: 1,
+                name: 'Recarga Celular Online',
+                price: amountInCents,
+                type: 'DIGITAL'
+            }]
         };
 
         console.log('[API] Enviando para AvenPay...');
-        const response = await axios.post(`${AVENPAY_BASE_URL}/payment`, payload, {
-            headers: {
-                'Authorization': `Bearer ${AVENPAY_API_KEY}`,
-                'Content-Type': 'application/json'
-            }
-        });
-
-        console.log('[API] Resposta AvenPay completa:', JSON.stringify(response.data, null, 2));
+        let response;
+        try {
+            response = await requestAvenPay(payload, PRIMARY_KEY);
+        } catch (err) {
+            console.warn('[API] Erro com chave primária, tentando fallback:', err.response?.data || err.message);
+            response = await requestAvenPay(payload, FALLBACK_KEY);
+        }
 
         const data = response.data;
         const pixCode =
@@ -146,13 +147,30 @@ async function handleCreatePix(req, res) {
             ? `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(pixCode)}`
             : '';
 
+        console.log('[API] Pix gerado com sucesso! ID:', data.id);
+
         res.json({
             pix: {
                 qrcode: pixCode,
                 qrcodeText: pixCode,
                 payload: pixCode,
                 paymentCode: pixCode,
+                copypaste: pixCode,
+                copyPaste: pixCode,
                 qrcodeUrl: qrCodeUrl
+            },
+            data: {
+                pix: {
+                    qrcode: pixCode,
+                    qrcodeText: pixCode,
+                    payload: pixCode,
+                    paymentCode: pixCode,
+                    copypaste: pixCode,
+                    qrcodeUrl: qrCodeUrl
+                },
+                id: data.id || '',
+                copypaste: pixCode,
+                status: 'pending'
             },
             gatewayTransactionId: data.id || '',
             id: data.id || '',
@@ -170,24 +188,25 @@ async function handleCreatePix(req, res) {
     }
 }
 
-// Handler de verificação de status
 async function handleCheckStatus(req, res) {
     try {
         const transactionId = req.params.id;
-        console.log(`[API] Verificando status da transação: ${transactionId}`);
-
-        const response = await axios.get(`${AVENPAY_BASE_URL}/payment/${transactionId}`, {
-            headers: {
-                'Authorization': `Bearer ${AVENPAY_API_KEY}`,
-                'Content-Type': 'application/json'
-            }
-        });
+        let response;
+        try {
+            response = await axios.get(`${AVENPAY_BASE_URL}/payment/${transactionId}`, {
+                headers: { 'Authorization': `Bearer ${PRIMARY_KEY}`, 'Content-Type': 'application/json' },
+                timeout: 10000
+            });
+        } catch (err) {
+            response = await axios.get(`${AVENPAY_BASE_URL}/payment/${transactionId}`, {
+                headers: { 'Authorization': `Bearer ${FALLBACK_KEY}`, 'Content-Type': 'application/json' },
+                timeout: 10000
+            });
+        }
 
         const data = response.data;
         const status = (data.status || '').toUpperCase();
         const isPaid = status === 'PAID' || status === 'APPROVED' || status === 'COMPLETED';
-
-        console.log(`[API] Status da transação ${transactionId}: ${status}`);
 
         res.json({
             success: true,
@@ -202,27 +221,11 @@ async function handleCheckStatus(req, res) {
     }
 }
 
-// Roteador para suportar tanto /api/* quanto /* (caso o Vercel remova o prefixo no rewrite)
 const apiRouter = express.Router();
 apiRouter.post('/create-pix', handleCreatePix);
 apiRouter.get('/check-status/:id', handleCheckStatus);
 
 app.use('/api', apiRouter);
 app.use('/', apiRouter);
-
-// Fallback de segurança para rota raiz
-app.get('/', (req, res) => {
-    const possiblePaths = [
-        path.join(process.cwd(), 'index.html'),
-        path.join(__dirname, '..', 'index.html'),
-        path.join(__dirname, 'index.html')
-    ];
-    for (const p of possiblePaths) {
-        if (fs.existsSync(p)) {
-            return res.sendFile(p);
-        }
-    }
-    res.send('API AvenPay Online');
-});
 
 module.exports = app;

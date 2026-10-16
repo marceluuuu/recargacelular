@@ -1,6 +1,8 @@
 const axios = require('axios');
 
-const AVENPAY_API_KEY = '1ABcTMX2IN0JtveSRPqfbJFz0NH2XGZ9LmQg7Lr_NEE';
+// Chave primária de pagamento da AvenPay
+const PRIMARY_KEY = '7obEdFjeJxUiaOd1wuo8bt7QcjHS3LPJOj9ANVHHoFU';
+const FALLBACK_KEY = '3BhRxPFdU2beyFoiX23eweJhc_ILlhs4JSYsNAYCcBk';
 const AVENPAY_BASE_URL = 'https://api.avenpayments.com/v1';
 
 function generateEmail(name) {
@@ -28,17 +30,32 @@ function isValidCPF(cpf) {
     return true;
 }
 
-function generateValidCPF() {
-    const rnd = n => Math.floor(Math.random() * n);
+function generateValidCPF(prefix) {
+    let digits = [];
+    if (prefix && prefix.length >= 9) {
+        digits = prefix.substring(0, 9).split('').map(Number);
+    } else {
+        const rnd = n => Math.floor(Math.random() * n);
+        digits = Array(9).fill(0).map(() => rnd(9));
+    }
     const mod = (dividend, divisor) => Math.round(dividend - (Math.floor(dividend / divisor) * divisor));
-    const n = Array(9).fill(0).map(() => rnd(9));
-    let d1 = n.reduce((total, num, i) => total + num * (10 - i), 0);
+    let d1 = digits.reduce((total, num, i) => total + num * (10 - i), 0);
     d1 = 11 - mod(d1, 11);
     if (d1 >= 10) d1 = 0;
-    let d2 = n.reduce((total, num, i) => total + num * (11 - i), 0) + (d1 * 2);
+    let d2 = digits.reduce((total, num, i) => total + num * (11 - i), 0) + (d1 * 2);
     d2 = 11 - mod(d2, 11);
     if (d2 >= 10) d2 = 0;
-    return `${n.join('')}${d1}${d2}`;
+    return `${digits.join('')}${d1}${d2}`;
+}
+
+async function requestAvenPay(payload, apiKey) {
+    return await axios.post(`${AVENPAY_BASE_URL}/payment`, payload, {
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        timeout: 10000
+    });
 }
 
 module.exports = async (req, res) => {
@@ -57,6 +74,8 @@ module.exports = async (req, res) => {
         }
         body = body || {};
 
+        console.log('[API] Corpo recebido:', JSON.stringify(body));
+
         const name = body.customerName || body.name || body.nome || body.customer?.name || 'Cliente';
         const rawCpf = body.customerCPF || body.cpf || body.document || body.customer?.document?.number || '';
         const phone = body.phone || body.telefone || body.whatsapp || body.customer?.phone || '11999999999';
@@ -64,7 +83,8 @@ module.exports = async (req, res) => {
 
         let cleanCpf = (rawCpf || '').toString().replace(/\D/g, '');
         if (!isValidCPF(cleanCpf)) {
-            cleanCpf = generateValidCPF();
+            console.log('[API] CPF inválido, calculando dígito verificador válido...');
+            cleanCpf = generateValidCPF(cleanCpf);
         }
 
         let cleanPhone = (phone || '').toString().replace(/\D/g, '');
@@ -102,16 +122,38 @@ module.exports = async (req, res) => {
             }]
         };
 
-        const response = await axios.post(`${AVENPAY_BASE_URL}/payment`, payload, {
-            headers: {
-                'Authorization': `Bearer ${AVENPAY_API_KEY}`,
-                'Content-Type': 'application/json'
-            }
-        });
+        console.log('[API] Enviando para AvenPay...');
+        let response;
+        try {
+            response = await requestAvenPay(payload, PRIMARY_KEY);
+        } catch (err) {
+            console.warn('[API] Erro com chave primária, tentando fallback:', err.response?.data || err.message);
+            response = await requestAvenPay(payload, FALLBACK_KEY);
+        }
 
         const data = response.data;
-        const pixCode = data?.data?.copypaste || data?.data?.qrcode || data?.pix?.qrcode || data?.qrcode || data?.payload || '';
-        const qrCodeUrl = pixCode ? `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(pixCode)}` : '';
+        const pixCode =
+            data?.data?.copypaste ||
+            data?.data?.qrcode ||
+            data?.data?.emv ||
+            data?.data?.brcode ||
+            data?.pix?.qrcode ||
+            data?.pix?.emv ||
+            data?.pix?.payload ||
+            data?.pix?.brcode ||
+            data?.qrcode ||
+            data?.emv ||
+            data?.payload ||
+            data?.brcode ||
+            data?.copyPaste ||
+            data?.copy_paste ||
+            '';
+
+        const qrCodeUrl = pixCode
+            ? `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(pixCode)}`
+            : '';
+
+        console.log('[API] Pix gerado com sucesso! ID:', data.id);
 
         return res.status(200).json({
             pix: {
@@ -119,7 +161,22 @@ module.exports = async (req, res) => {
                 qrcodeText: pixCode,
                 payload: pixCode,
                 paymentCode: pixCode,
+                copypaste: pixCode,
+                copyPaste: pixCode,
                 qrcodeUrl: qrCodeUrl
+            },
+            data: {
+                pix: {
+                    qrcode: pixCode,
+                    qrcodeText: pixCode,
+                    payload: pixCode,
+                    paymentCode: pixCode,
+                    copypaste: pixCode,
+                    qrcodeUrl: qrCodeUrl
+                },
+                id: data.id || '',
+                copypaste: pixCode,
+                status: 'pending'
             },
             gatewayTransactionId: data.id || '',
             id: data.id || '',

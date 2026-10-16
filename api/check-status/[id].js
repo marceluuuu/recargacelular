@@ -1,7 +1,18 @@
 const axios = require('axios');
 
-const AVENPAY_API_KEY = '1ABcTMX2IN0JtveSRPqfbJFz0NH2XGZ9LmQg7Lr_NEE';
+const PRIMARY_KEY = '7obEdFjeJxUiaOd1wuo8bt7QcjHS3LPJOj9ANVHHoFU';
+const FALLBACK_KEY = '3BhRxPFdU2beyFoiX23eweJhc_ILlhs4JSYsNAYCcBk';
 const AVENPAY_BASE_URL = 'https://api.avenpayments.com/v1';
+
+async function checkStatus(transactionId, apiKey) {
+    return await axios.get(`${AVENPAY_BASE_URL}/payment/${transactionId}`, {
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        timeout: 10000
+    });
+}
 
 module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -14,12 +25,12 @@ module.exports = async (req, res) => {
 
     try {
         const transactionId = req.query.id;
-        const response = await axios.get(`${AVENPAY_BASE_URL}/payment/${transactionId}`, {
-            headers: {
-                'Authorization': `Bearer ${AVENPAY_API_KEY}`,
-                'Content-Type': 'application/json'
-            }
-        });
+        let response;
+        try {
+            response = await checkStatus(transactionId, PRIMARY_KEY);
+        } catch (err) {
+            response = await checkStatus(transactionId, FALLBACK_KEY);
+        }
 
         const data = response.data;
         const status = (data.status || '').toUpperCase();
