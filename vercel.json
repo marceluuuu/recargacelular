@@ -2,8 +2,12 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/((?!api/).*)",
-      "destination": "/index.html"
+      "source": "/api/create-pix",
+      "destination": "/api/create-pix"
+    },
+    {
+      "source": "/api/check-status/:id",
+      "destination": "/api/check-status/[id]"
     }
   ]
 }
